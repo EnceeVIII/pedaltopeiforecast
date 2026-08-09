@@ -22,6 +22,7 @@
     --tail:#3FBF8F;         /* tailwind = good */
     --head:#E5574E;         /* headwind = bad */
     --cross:#C9A24B;        /* crosswind */
+    --dusk:#A98BE6;         /* late evening */
     --moon:#9FB3D9;
     --radius:16px;
     --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
@@ -88,7 +89,9 @@
     background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
     overflow:hidden;margin-bottom:16px;
   }
-  .leg.night{background:linear-gradient(180deg,#101828,#0e1526)}
+  .leg.phase-day{border-left:4px solid var(--dawn)}
+  .leg.phase-dusk{background:linear-gradient(180deg,#181428,#12101f);border-left:4px solid var(--dusk)}
+  .leg.phase-night{background:linear-gradient(180deg,#101828,#0e1526);border-left:4px solid var(--moon)}
   .rail{
     padding:18px 16px;border-right:1px solid var(--line);
     display:flex;flex-direction:column;gap:2px;position:relative;
@@ -111,7 +114,8 @@
   .route{font-family:var(--disp);font-weight:700;font-size:17px;letter-spacing:-.01em}
   .route .to{color:var(--muted-2);margin:0 6px;font-weight:600}
   .window{font-family:var(--mono);font-size:12.5px;color:var(--dawn);font-weight:700}
-  .leg.night .window{color:var(--moon)}
+  .leg.phase-dusk .window{color:var(--dusk)}
+  .leg.phase-night .window{color:var(--moon)}
   .toronto{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:1px}
   .flag{color:var(--wellspring);font-weight:700}
 
@@ -149,6 +153,8 @@
   .wind-cell .spd{font-family:var(--mono);font-size:11px;font-weight:700}
   .wind-cell .frm{font-family:var(--mono);font-size:9px;color:var(--muted)}
   .hour.rides-hot{box-shadow:inset 0 0 0 1px rgba(242,166,90,.25)}
+  .hour.sec-start{margin-left:11px;position:relative}
+  .hour.sec-start::before{content:"";position:absolute;left:-7px;top:8px;bottom:8px;width:1px;background:repeating-linear-gradient(var(--muted-2) 0 3px,transparent 3px 6px)}
 
   .msg{padding:16px;border:1px dashed var(--line);border-radius:12px;color:var(--muted);font-size:13px;font-family:var(--mono)}
   .msg.err{color:var(--head);border-color:rgba(229,87,78,.4)}
@@ -201,17 +207,17 @@
     <span class="swatch"><span class="dot" style="background:var(--tail)"></span> tailwind</span>
     <span class="swatch"><span class="dot" style="background:var(--head)"></span> headwind</span>
     <span class="swatch"><span class="dot" style="background:var(--cross)"></span> crosswind</span>
-    <span class="swatch"><span class="dot" style="background:var(--dawn)"></span> daytime leg</span>
-    <span class="swatch"><span class="dot" style="background:var(--moon)"></span> night leg</span>
+    <span class="swatch"><span class="dot" style="background:var(--dawn)"></span> day</span>
+    <span class="swatch"><span class="dot" style="background:var(--dusk)"></span> late evening</span>
+    <span class="swatch"><span class="dot" style="background:var(--moon)"></span> night</span>
   </div>
 
   <div id="legs"></div>
 
   <footer class="note">
-    <b>How to read it.</b> Each hour shows temperature (feels-like beneath), chance of rain, and the wind — arrow points the direction the wind is blowing, sized text is speed in km/h, and it's colour-coded for how it hits <i>you</i> relative to your direction of travel. The wind badge on each leg is the average across the riding window.<br>
-    <b>Times</b> are shown in each leg's local clock, with the Toronto-time equivalent beneath (watches stay on Toronto time to Summerside). <b>Forecasts firm up as the date nears</b> — anything more than ~7 days out is a low-confidence signal, so re-open this closer to the ride.<br>
-    <b>Share it:</b> this is a single self-contained file — send the <code>.html</code> to teammates and they open it in any browser, or drop it on a link (e.g. GitHub Pages) for a permanent URL. It pulls fresh data every time it loads. No login, no key.
-    <div class="src">Weather: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> (free, no API key). Leg coordinates are representative midpoints and are editable at the top of this file's script.</div>
+    <b>How to read it.</b> Each hour shows temperature (feels-like beneath), chance of rain, and the wind — arrow points the direction the wind is blowing, sized text is speed in km/h, and it's colour-coded for how it hits <i>you</i> relative to your direction of travel. Each leg is sampled at three points along your actual GPX route (start / middle / end); the dotted breaks in the hourly strip mark where the forecast hands off to the next stretch, so the wind follows the road as it bends. The wind badge is the blended effect across the whole leg.<br>
+    <b>Times</b> are shown in each leg's local clock, with the Toronto-time equivalent beneath (watches stay on Toronto time to Summerside). <b>Forecasts firm up as the date nears</b> — anything more than ~7 days out is a low-confidence signal, so re-open this closer to the ride.
+    <div class="src">Leg coordinates are representative midpoints and are editable at the top of this file's script.</div>
   </footer>
 
 </div>
@@ -220,56 +226,68 @@
 /* ============================================================================
    EDIT HERE.  One object per riding leg. Everything the page shows comes from
    this list, so if a time, place, or coordinate is wrong, fix it here.
-     start/end : [lat, lon]  — used to draw the leg's direction of travel
-                 (for head/tail/cross wind). Weather is sampled at the midpoint.
+     start/end : [lat, lon]  — exact GPX track endpoints (reference only).
+     sections  : three points along the GPX track (first third / middle / final
+                 third), each with pt:[lat,lon] and bear = the direction of
+                 travel through that stretch. Each ride-hour is matched to the
+                 section you'd be riding then, and its weather + head/tail/cross
+                 wind come from that point. This is what makes winding legs read
+                 correctly rather than using one average bearing.
      tz        : IANA timezone the ride window is written in
      date      : YYYY-MM-DD in that timezone
      from/to   : local clock hours (0–24). Ride shown for from..to inclusive.
      toronto   : the same window expressed on Toronto time (watch time)
-     night     : true = ride happens in darkness (styling only)
+     phase     : "day" | "dusk" (late evening) | "night" — colour codes the card
 ============================================================================ */
 const LEGS = [
   { n:1, route:["Oakville (Wellspring)","MacVille P.S."],
-    prov:"ON", dist:"58.6 km", climb:"234 m",
-    start:[43.451,-79.717], end:[43.90,-80.00],
+    prov:"ON", dist:"58.2 km", climb:"234 m",
+    start:[43.47781,-79.72628], end:[43.85516,-79.78619],
+    sections:[{pt:[43.53663,-79.80668],bear:312.6},{pt:[43.65523,-79.86230],bear:346.4},{pt:[43.78826,-79.86191],bear:38.2}],
     tz:"America/Toronto", date:"2026-08-15", from:9, to:12,
-    toronto:"9:00 AM – 12:00 PM ET", night:false, tag:"Departure" },
+    toronto:"9:00 AM – 12:00 PM ET", phase:"day", tag:"Departure" },
 
   { n:2, route:["Hwy 60 / Dwight","Maynooth"],
     prov:"ON", dist:"125.1 km", climb:"1,400 m",
-    start:[45.323,-78.954], end:[45.227,-77.945],
+    start:[45.33189,-79.01431], end:[45.23397,-77.93987],
+    sections:[{pt:[45.43039,-78.82873],bear:49.9},{pt:[45.57808,-78.41051],bear:99.4},{pt:[45.37572,-78.08305],bear:141.0}],
     tz:"America/Toronto", date:"2026-08-16", from:0, to:6,
-    toronto:"12:00 AM – 6:00 AM ET", night:true, tag:"Overnight · biggest climb" },
+    toronto:"12:00 AM – 6:00 AM ET", phase:"night", tag:"Overnight · biggest climb" },
 
   { n:3, route:["Joliette","St-Narcisse"],
-    prov:"QC", dist:"126.2 km", climb:"701 m",
-    start:[46.021,-73.439], end:[46.545,-72.428],
+    prov:"QC", dist:"125.9 km", climb:"701 m",
+    start:[46.02500,-73.43312], end:[46.59218,-72.59670],
+    sections:[{pt:[46.09913,-73.27091],bear:50.4},{pt:[46.30819,-72.98586],bear:24.6},{pt:[46.53990,-72.77612],bear:57.2}],
     tz:"America/Toronto", date:"2026-08-17", from:6, to:12,
-    toronto:"6:00 AM – 12:00 PM ET", night:false, tag:"" },
+    toronto:"6:00 AM – 12:00 PM ET", phase:"day", tag:"" },
 
   { n:4, route:["Métis-sur-Mer","Ste-Anne-des-Monts"],
-    prov:"QC", dist:"121.9 km", climb:"877 m",
-    start:[48.678,-67.999], end:[49.128,-66.492],
+    prov:"QC", dist:"121.8 km", climb:"877 m",
+    start:[48.68815,-67.95087], end:[49.12390,-66.50624],
+    sections:[{pt:[48.78291,-67.72244],bear:61.3},{pt:[48.92159,-67.23774],bear:66.1},{pt:[49.07534,-66.75669],bear:68.1}],
     tz:"America/Toronto", date:"2026-08-18", from:12, to:18,
-    toronto:"12:00 PM – 6:00 PM ET", night:false, tag:"Gaspé coast" },
+    toronto:"12:00 PM – 6:00 PM ET", phase:"day", tag:"Gaspé coast" },
 
   { n:5, route:["New Richmond","Dalhousie"],
-    prov:"QC → NB", dist:"121.7 km", climb:"934 m",
-    start:[48.161,-65.861], end:[48.067,-66.377],
+    prov:"QC → NB", dist:"122.0 km", climb:"934 m",
+    start:[48.17621,-65.85004], end:[48.06512,-66.37415],
+    sections:[{pt:[48.12582,-66.04432],bear:258.3},{pt:[48.11088,-66.36488],bear:254.1},{pt:[48.00484,-66.61990],bear:88.2}],
     tz:"America/Toronto", date:"2026-08-19", from:18, to:24,
-    toronto:"6:00 PM – 12:00 AM ET", night:true, tag:"Late evening" },
+    toronto:"6:00 PM – 12:00 AM ET", phase:"dusk", tag:"Late evening" },
 
   { n:6, route:["Pugwash","Caribou Ferry Dock"],
-    prov:"NS", dist:"119.6 km", climb:"930 m",
-    start:[45.855,-63.658], end:[45.783,-62.702],
+    prov:"NS", dist:"119.4 km", climb:"930 m",
+    start:[45.84111,-63.64292], end:[45.73331,-62.68936],
+    sections:[{pt:[45.69907,-63.55209],bear:141.7},{pt:[45.72498,-63.22650],bear:59.0},{pt:[45.72463,-62.79136],bear:103.6}],
     tz:"America/Halifax", date:"2026-08-21", from:1, to:7,
-    toronto:"12:00 AM – 6:00 AM ET", night:true, tag:"Overnight · hard ferry cutoff" },
+    toronto:"12:00 AM – 6:00 AM ET", phase:"night", tag:"Overnight · hard ferry cutoff" },
 
   { n:7, route:["Summerside","Charlottetown"],
     prov:"PEI", dist:"77.0 km", climb:"787 m",
-    start:[46.393,-63.790], end:[46.238,-63.131],
+    start:[46.39390,-63.79246], end:[46.23258,-63.12290],
+    sections:[{pt:[46.33788,-63.69641],bear:147.7},{pt:[46.24214,-63.51395],bear:75.2},{pt:[46.25622,-63.24668],bear:107.1}],
     tz:"America/Halifax", date:"2026-08-22", from:10, to:14,
-    toronto:"9:30 AM – 1:00 PM ET", night:false, tag:"Finish · into Charlottetown" },
+    toronto:"9:30 AM – 1:00 PM ET", phase:"day", tag:"Finish · into Charlottetown" },
 ];
 
 /* ---------- geo + wind math ---------- */
@@ -310,31 +328,47 @@ const WMO={
 };
 const wmo=(c,day)=>{const e=WMO[c]||["—","•","•"];return {label:e[0],icon:day?e[1]:e[2]};};
 
-/* ---------- fetch one leg ---------- */
+/* ---------- fetch one leg (samples 3 track sections in one request) ---------- */
 async function fetchLeg(leg){
-  const [lat,lon]=mid(leg.start,leg.end);
+  const S=leg.sections;
+  const lats=S.map(s=>s.pt[0].toFixed(4)).join(",");
+  const lons=S.map(s=>s.pt[1].toFixed(4)).join(",");
   const hourly="temperature_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m,is_day";
-  const url=`https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}`
+  const url=`https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}`
     +`&hourly=${hourly}&wind_speed_unit=kmh&temperature_unit=celsius`
     +`&timezone=${encodeURIComponent(leg.tz)}&start_date=${leg.date}&end_date=${leg.date}`;
   const r=await fetch(url);
   if(!r.ok) throw new Error("HTTP "+r.status);
   const d=await r.json();
-  const H=d.hourly; if(!H||!H.time) throw new Error("no data");
-  const rows=[];
-  for(let i=0;i<H.time.length;i++){
-    const hr=parseInt(H.time[i].slice(11,13),10);
-    if(hr>=leg.from && hr<=leg.to){
-      rows.push({
-        hr, time:H.time[i],
-        temp:H.temperature_2m[i], feels:H.apparent_temperature[i],
-        pop:H.precipitation_probability?.[i], precip:H.precipitation?.[i],
-        code:H.weather_code[i], day:H.is_day?.[i]===1,
-        wspd:H.wind_speed_10m[i], wdir:H.wind_direction_10m[i], gust:H.wind_gusts_10m?.[i]
-      });
+  const arr=Array.isArray(d)?d:[d];   // multi-location returns an array, one per section
+  // slice each section's hourly down to the ride window
+  const perSec=arr.map(loc=>{
+    const H=loc&&loc.hourly, rows=[];
+    if(H&&H.time){
+      for(let i=0;i<H.time.length;i++){
+        const hr=parseInt(H.time[i].slice(11,13),10);
+        if(hr>=leg.from && hr<=leg.to){
+          rows.push({hr,
+            temp:H.temperature_2m[i], feels:H.apparent_temperature[i],
+            pop:H.precipitation_probability?.[i], precip:H.precipitation?.[i],
+            code:H.weather_code[i], day:H.is_day?.[i]===1,
+            wspd:H.wind_speed_10m[i], wdir:H.wind_direction_10m[i], gust:H.wind_gusts_10m?.[i]});
+        }
+      }
     }
+    return rows;
+  });
+  const base=perSec[0]||[]; const n=base.length;
+  if(!n) throw new Error("no data");
+  // map each ride-hour to the track section you'd be riding at that point
+  const nSec=S.length, merged=[];
+  for(let i=0;i<n;i++){
+    const f=(i+0.5)/n;
+    const idx=f<1/3?0:(f<2/3?1:Math.min(2,nSec-1));
+    const src=(perSec[idx] && perSec[idx][i]) ? perSec[idx][i] : base[i];
+    merged.push({...src, bear:S[idx].bear, sec:idx});
   }
-  return rows;
+  return merged;
 }
 
 /* ---------- render helpers ---------- */
@@ -352,13 +386,14 @@ function windArrow(fromDeg,cls){
     <path d="M10 2 L10 18 M10 2 L6 8 M10 2 L14 8" stroke="${col}" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 }
 
-function renderHour(h,travel){
+function renderHour(h,newSec){
   const w=wmo(h.code,h.day);
-  const eff=windEffect(h.wdir,h.wspd,travel);
+  const eff=windEffect(h.wdir,h.wspd,h.bear);
   const pop=(h.pop??0);
   const popCls=pop>=30?"":"dry";
   const hot=h.temp>=27;
-  return `<div class="hour${hot?' rides-hot':''}">
+  const col=eff.cls==='head'?'var(--head)':eff.cls==='tail'?'var(--tail)':'var(--cross)';
+  return `<div class="hour${hot?' rides-hot':''}${newSec?' sec-start':''}">
     <div class="t">${hourLabel(h.hr)}</div>
     <div class="glyph" title="${w.label}">${w.icon}</div>
     <div class="temp">${Math.round(h.temp)}°</div>
@@ -366,19 +401,19 @@ function renderHour(h,travel){
     <div class="pp ${popCls}">${pop>0?pop+'%':'—'}</div>
     <div class="wind-cell">
       ${windArrow(h.wdir,eff.cls)}
-      <div class="spd" style="color:${eff.cls==='head'?'var(--head)':eff.cls==='tail'?'var(--tail)':'var(--cross)'}">${Math.round(h.wspd)}</div>
+      <div class="spd" style="color:${col}">${Math.round(h.wspd)}</div>
       <div class="frm">${cardinal(h.wdir)}</div>
     </div>
   </div>`;
 }
 
-function legSummary(rows,travel){
+function legSummary(rows){
   const temps=rows.map(r=>r.temp);
   const tmin=Math.round(Math.min(...temps)), tmax=Math.round(Math.max(...temps));
   const pops=rows.map(r=>r.pop??0), popMax=Math.max(...pops);
   const spd=rows.map(r=>r.wspd), spdAvg=Math.round(spd.reduce((a,b)=>a+b,0)/spd.length), gustMax=Math.round(Math.max(...rows.map(r=>r.gust||0)));
-  // average wind vector effect
-  let comp=0; rows.forEach(r=>comp+=windEffect(r.wdir,r.wspd,travel).comp); comp/=rows.length;
+  // blended wind effect across the ride, each hour using its own section bearing
+  let comp=0; rows.forEach(r=>comp+=windEffect(r.wdir,r.wspd,r.bear).comp); comp/=rows.length;
   let kind,cls;
   if(comp>2){kind="Headwind";cls="head";} else if(comp<-2){kind="Tailwind";cls="tail";} else {kind="Crosswind";cls="cross";}
   return {tmin,tmax,popMax,spdAvg,gustMax,kind,cls};
@@ -386,7 +421,6 @@ function legSummary(rows,travel){
 
 function renderLeg(leg,rows,err){
   const dt=fmtDate(leg.date);
-  const travel=bearing(leg.start,leg.end);
   let inner;
   if(err){
     const dOut=daysOut(leg.date);
@@ -396,7 +430,7 @@ function renderLeg(leg,rows,err){
   } else if(!rows || !rows.length){
     inner = `<div class="msg">No hourly data returned for this window yet.</div>`;
   } else {
-    const s=legSummary(rows,travel);
+    const s=legSummary(rows);
     const conf = (()=>{const d=daysOut(leg.date);return d<=3?'high':d<=7?'medium':'low';})();
     inner = `
       <div class="summary">
@@ -405,16 +439,16 @@ function renderLeg(leg,rows,err){
         <div class="chip wind"><span class="k">Wind</span><span class="v">${s.spdAvg} km/h${s.gustMax>s.spdAvg+10?` · g${s.gustMax}`:''}</span><span class="badge ${s.cls}">${s.kind}</span></div>
         <div class="chip"><span class="k">Confidence</span><span class="v">${conf}</span></div>
       </div>
-      <div class="hours">${rows.map(r=>renderHour(r,travel)).join("")}</div>`;
+      <div class="hours">${rows.map((r,i)=>renderHour(r, i>0 && r.sec!==rows[i-1].sec)).join("")}</div>`;
   }
   return `
-  <div class="leg ${leg.night?'night':''}">
+  <div class="leg phase-${leg.phase}">
     <div class="rail">
       <div class="legno"><span class="hash">Leg</span>${leg.n}</div>
       <div class="date">${dt.d}<span class="weekday"> · ${dt.wd}</span></div>
       <div class="prov">${leg.prov}</div>
       <div class="stat-mini"><b>${leg.dist}</b> · climb <b>${leg.climb}</b></div>
-      <div class="diurnal">${leg.night?'🌙 night':'☀️ day'}</div>
+      <div class="diurnal">${leg.phase==='night'?'🌙 night':leg.phase==='dusk'?'🌆 late evening':'☀️ day'}</div>
     </div>
     <div class="body">
       <div class="leghead">
