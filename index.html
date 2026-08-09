@@ -118,6 +118,14 @@
   .leg.phase-night .window{color:var(--moon)}
   .toronto{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:1px}
   .flag{color:var(--wellspring);font-weight:700}
+  .status{font-family:var(--disp);font-weight:800;font-size:10px;letter-spacing:.07em;text-transform:uppercase;padding:2px 9px;border-radius:999px;white-space:nowrap;align-self:center}
+  .status.done{background:rgba(63,191,143,.16);color:var(--tail)}
+  .status.live{background:rgba(242,166,90,.18);color:var(--dawn)}
+  .leg.is-done{opacity:.55}
+  .leg.is-live{box-shadow:inset 0 0 0 1px rgba(242,166,90,.55)}
+  .done-state{display:flex;align-items:center;gap:11px;padding:14px 2px 8px}
+  .done-check{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--tail);color:var(--ink);font-weight:800;font-size:15px;flex:0 0 auto}
+  .done-text{font-family:var(--disp);font-weight:700;font-size:15px;color:var(--muted)}
 
   /* summary strip */
   .summary{
@@ -217,7 +225,6 @@
   <footer class="note">
     <b>How to read it.</b> Each hour shows temperature (feels-like beneath), chance of rain, and the wind — arrow points the direction the wind is blowing, sized text is speed in km/h, and it's colour-coded for how it hits <i>you</i> relative to your direction of travel. Each leg is sampled at three points along your actual GPX route (start / middle / end); the dotted breaks in the hourly strip mark where the forecast hands off to the next stretch, so the wind follows the road as it bends. The wind badge is the blended effect across the whole leg.<br>
     <b>Times</b> are shown in each leg's local clock, with the Toronto-time equivalent beneath (watches stay on Toronto time to Summerside). <b>Forecasts firm up as the date nears</b> — anything more than ~7 days out is a low-confidence signal, so re-open this closer to the ride.
-    <div class="src">Leg coordinates are representative midpoints and are editable at the top of this file's script.</div>
   </footer>
 
 </div>
@@ -329,19 +336,12 @@ const WMO={
 const wmo=(c,day)=>{const e=WMO[c]||["—","•","•"];return {label:e[0],icon:day?e[1]:e[2]};};
 
 /* ---------- fetch one leg (samples 3 track sections in one request) ---------- */
-async function fetchLeg(leg){
+const OM_LIVE="https://api.open-meteo.com/v1/forecast";
+const OM_HOURLY="temperature_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m,is_day";
+
+function mergeSections(leg,data){
   const S=leg.sections;
-  const lats=S.map(s=>s.pt[0].toFixed(4)).join(",");
-  const lons=S.map(s=>s.pt[1].toFixed(4)).join(",");
-  const hourly="temperature_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m,is_day";
-  const url=`https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}`
-    +`&hourly=${hourly}&wind_speed_unit=kmh&temperature_unit=celsius`
-    +`&timezone=${encodeURIComponent(leg.tz)}&start_date=${leg.date}&end_date=${leg.date}`;
-  const r=await fetch(url);
-  if(!r.ok) throw new Error("HTTP "+r.status);
-  const d=await r.json();
-  const arr=Array.isArray(d)?d:[d];   // multi-location returns an array, one per section
-  // slice each section's hourly down to the ride window
+  const arr=Array.isArray(data)?data:[data];   // multi-location returns an array, one per section
   const perSec=arr.map(loc=>{
     const H=loc&&loc.hourly, rows=[];
     if(H&&H.time){
@@ -359,10 +359,9 @@ async function fetchLeg(leg){
     return rows;
   });
   const base=perSec[0]||[]; const n=base.length;
-  if(!n) throw new Error("no data");
-  // map each ride-hour to the track section you'd be riding at that point
+  if(!n) return [];
   const nSec=S.length, merged=[];
-  for(let i=0;i<n;i++){
+  for(let i=0;i<n;i++){                                   // map each ride-hour to the section you'd be riding then
     const f=(i+0.5)/n;
     const idx=f<1/3?0:(f<2/3?1:Math.min(2,nSec-1));
     const src=(perSec[idx] && perSec[idx][i]) ? perSec[idx][i] : base[i];
@@ -371,12 +370,38 @@ async function fetchLeg(leg){
   return merged;
 }
 
+async function fetchLeg(leg){
+  const S=leg.sections;
+  const lats=S.map(s=>s.pt[0].toFixed(4)).join(",");
+  const lons=S.map(s=>s.pt[1].toFixed(4)).join(",");
+  const u=`${OM_LIVE}?latitude=${lats}&longitude=${lons}&hourly=${OM_HOURLY}`
+    +`&wind_speed_unit=kmh&temperature_unit=celsius`
+    +`&timezone=${encodeURIComponent(leg.tz)}&start_date=${leg.date}&end_date=${leg.date}`;
+  const r=await fetch(u); if(!r.ok) throw new Error("HTTP "+r.status);
+  const rows=mergeSections(leg, await r.json());
+  if(!rows||!rows.length) throw new Error("no data");
+  return rows;
+}
+
 /* ---------- render helpers ---------- */
 const WEEK=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function fmtDate(iso){const [y,m,dd]=iso.split("-").map(Number);const dt=new Date(Date.UTC(y,m-1,dd));return {wd:WEEK[dt.getUTCDay()],d:`${MON[m-1]} ${dd}`};}
 const hourLabel=h=>{const hr=((h%24)+24)%24;const ap=hr<12?"AM":"PM";let x=hr%12;if(x===0)x=12;return `${x}${ap.toLowerCase()}`;};
 const daysOut=iso=>{const t=new Date();t.setHours(0,0,0,0);const [y,m,d]=iso.split("-").map(Number);return Math.round((Date.UTC(y,m-1,d)-Date.UTC(t.getFullYear(),t.getMonth(),t.getDate()))/864e5);};
+
+/* completed / riding now / upcoming, from the viewer's clock. Aug daylight offsets:
+   Toronto = UTC-4, Halifax = UTC-3. */
+function legStatus(leg){
+  const off = leg.tz==="America/Halifax" ? -3 : -4;
+  const [y,m,d]=leg.date.split("-").map(Number);
+  const startMs = Date.UTC(y,m-1,d,leg.from) - off*3600e3;
+  const endMs   = Date.UTC(y,m-1,d,leg.to)   - off*3600e3;
+  const now=Date.now();
+  if(now>=endMs) return 'done';
+  if(now>=startMs) return 'live';
+  return 'soon';
+}
 
 function windArrow(fromDeg,cls){
   // arrow points the way wind blows TO = from+180. SVG "up" = North.
@@ -419,10 +444,12 @@ function legSummary(rows){
   return {tmin,tmax,popMax,spdAvg,gustMax,kind,cls};
 }
 
-function renderLeg(leg,rows,err){
+function renderLeg(leg,rows,err,status){
   const dt=fmtDate(leg.date);
   let inner;
-  if(err){
+  if(status==='done'){
+    inner = `<div class="done-state"><span class="done-check">✓</span><span class="done-text">Completed</span></div>`;
+  } else if(err){
     const dOut=daysOut(leg.date);
     inner = dOut>16
       ? `<div class="msg">Forecast opens about ${dOut-16} day(s) from now — Open-Meteo reaches 16 days ahead. Re-open closer to the ride.</div>`
@@ -431,18 +458,23 @@ function renderLeg(leg,rows,err){
     inner = `<div class="msg">No hourly data returned for this window yet.</div>`;
   } else {
     const s=legSummary(rows);
-    const conf = (()=>{const d=daysOut(leg.date);return d<=3?'high':d<=7?'medium':'low';})();
+    // right-most chip: live (riding) or forecast confidence
+    let dataChip;
+    if(status==='live'){ dataChip=`<div class="chip"><span class="k">Weather</span><span class="v" style="color:var(--dawn)">live</span></div>`; }
+    else { const d=daysOut(leg.date); const conf=d<=3?'high':d<=7?'medium':'low'; dataChip=`<div class="chip"><span class="k">Confidence</span><span class="v">${conf}</span></div>`; }
     inner = `
       <div class="summary">
         <div class="chip"><span class="k">Temp</span><span class="v">${s.tmin}°–${s.tmax}°C</span></div>
         <div class="chip"><span class="k">Rain</span><span class="v" style="color:${s.popMax>=40?'var(--rain)':'inherit'}">${s.popMax>0?s.popMax+'% peak':'none'}</span></div>
         <div class="chip wind"><span class="k">Wind</span><span class="v">${s.spdAvg} km/h${s.gustMax>s.spdAvg+10?` · g${s.gustMax}`:''}</span><span class="badge ${s.cls}">${s.kind}</span></div>
-        <div class="chip"><span class="k">Confidence</span><span class="v">${conf}</span></div>
+        ${dataChip}
       </div>
       <div class="hours">${rows.map((r,i)=>renderHour(r, i>0 && r.sec!==rows[i-1].sec)).join("")}</div>`;
   }
+  const pill = status==='done' ? '<span class="status done">✓ Completed</span>'
+             : status==='live' ? '<span class="status live">● Riding now</span>' : '';
   return `
-  <div class="leg phase-${leg.phase}">
+  <div class="leg phase-${leg.phase}${status==='done'?' is-done':''}${status==='live'?' is-live':''}">
     <div class="rail">
       <div class="legno"><span class="hash">Leg</span>${leg.n}</div>
       <div class="date">${dt.d}<span class="weekday"> · ${dt.wd}</span></div>
@@ -453,9 +485,10 @@ function renderLeg(leg,rows,err){
     <div class="body">
       <div class="leghead">
         <span class="route">${leg.route[0]}<span class="to">→</span>${leg.route[1]}</span>
+        ${pill}
       </div>
       <div class="window">${leg.toronto.includes('CONFIRM')?'<span class="flag">'+leg.toronto+'</span>':leg.toronto}</div>
-      <div class="toronto">${leg.tz==="America/Halifax" && !leg.provisional ? 'Atlantic local · '+hourLabel(leg.from)+'–'+hourLabel(leg.to) : leg.tag?leg.tag:''}</div>
+      <div class="toronto">${leg.tz==="America/Halifax" ? 'Atlantic local · '+hourLabel(leg.from)+'–'+hourLabel(leg.to) : leg.tag?leg.tag:''}</div>
       ${inner}
     </div>
   </div>`;
@@ -470,10 +503,12 @@ async function refreshAll(){
   const container=document.getElementById('legs');
 
   const results = await Promise.all(LEGS.map(async leg=>{
-    try{ return {leg, rows: await fetchLeg(leg)}; }
-    catch(e){ return {leg, err: e.message||'error'}; }
+    const status=legStatus(leg);
+    if(status==='done') return {leg, status};           // completed: no fetch, no forecast
+    try{ return {leg, status, rows: await fetchLeg(leg)}; }
+    catch(e){ return {leg, status, err: e.message||'error'}; }
   }));
-  container.innerHTML = results.map(r=>renderLeg(r.leg, r.rows, r.err)).join("");
+  container.innerHTML = results.map(r=>renderLeg(r.leg, r.rows, r.err, r.status)).join("");
 
   const now=new Date();
   document.getElementById('stamp').textContent =
