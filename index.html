@@ -127,6 +127,12 @@
   .done-check{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--tail);color:var(--ink);font-weight:800;font-size:15px;flex:0 0 auto}
   .done-text{font-family:var(--disp);font-weight:700;font-size:15px;color:var(--muted)}
 
+  /* condition flags */
+  .flags{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 2px}
+  .flag-pill{font-weight:600;font-size:11.5px;padding:3px 10px;border-radius:7px;display:inline-flex;align-items:center;gap:5px;border:1px solid}
+  .flag-pill.alert{background:rgba(229,87,78,.15);color:#ff8a82;border-color:rgba(229,87,78,.45)}
+  .flag-pill.caution{background:rgba(201,162,75,.14);color:#e6c169;border-color:rgba(201,162,75,.4)}
+
   /* summary strip */
   .summary{
     display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 12px;
@@ -223,7 +229,7 @@
   <div id="legs"></div>
 
   <footer class="note">
-    <b>How to read it.</b> Each hour shows temperature (feels-like beneath), chance of rain, and the wind — arrow points the direction the wind is blowing, sized text is speed in km/h, and it's colour-coded for how it hits <i>you</i> relative to your direction of travel. Each leg is sampled at three points along your actual GPX route (start / middle / end); the dotted breaks in the hourly strip mark where the forecast hands off to the next stretch, so the wind follows the road as it bends. The wind badge is the blended effect across the whole leg.<br>
+    <b>How to read it.</b> Each hour shows temperature (feels-like beneath), chance of rain, and the wind — arrow points the direction the wind is blowing, sized text is speed in km/h, and it's colour-coded for how it hits <i>you</i> relative to your direction of travel. Each leg is sampled at three points along your actual GPX route (start / middle / end); the dotted breaks in the hourly strip mark where the forecast hands off to the next stretch, so the wind follows the road as it bends. The wind badge is the blended effect across the whole leg. <b>Condition flags</b> appear above each leg when it's worth planning for — amber for caution, red for a hazard (thunderstorm, heavy rain, strong gusts, heat, cold, or fog); the leg's <b>sunrise/sunset</b> shows in the summary row.<br>
     <b>Times</b> are shown in each leg's local clock, with the Toronto-time equivalent beneath (watches stay on Toronto time to Summerside). <b>Forecasts firm up as the date nears</b> — anything more than ~7 days out is a low-confidence signal, so re-open this closer to the ride.
   </footer>
 
@@ -374,13 +380,17 @@ async function fetchLeg(leg){
   const S=leg.sections;
   const lats=S.map(s=>s.pt[0].toFixed(4)).join(",");
   const lons=S.map(s=>s.pt[1].toFixed(4)).join(",");
-  const u=`${OM_LIVE}?latitude=${lats}&longitude=${lons}&hourly=${OM_HOURLY}`
+  const u=`${OM_LIVE}?latitude=${lats}&longitude=${lons}&hourly=${OM_HOURLY}&daily=sunrise,sunset`
     +`&wind_speed_unit=kmh&temperature_unit=celsius`
     +`&timezone=${encodeURIComponent(leg.tz)}&start_date=${leg.date}&end_date=${leg.date}`;
   const r=await fetch(u); if(!r.ok) throw new Error("HTTP "+r.status);
-  const rows=mergeSections(leg, await r.json());
+  const data=await r.json();
+  const rows=mergeSections(leg, data);
   if(!rows||!rows.length) throw new Error("no data");
-  return rows;
+  const arr=Array.isArray(data)?data:[data];
+  const loc=arr[Math.min(1,arr.length-1)]||arr[0];   // middle section for sun times
+  const sun=loc&&loc.daily ? {rise:loc.daily.sunrise?.[0], set:loc.daily.sunset?.[0]} : null;
+  return {rows, sun};
 }
 
 /* ---------- render helpers ---------- */
@@ -401,6 +411,39 @@ function legStatus(leg){
   if(now>=endMs) return 'done';
   if(now>=startMs) return 'live';
   return 'soon';
+}
+
+/* sunrise/sunset ISO (local) -> "6:12a" */
+function fmtSun(iso){
+  if(!iso) return '—';
+  const hh=+iso.slice(11,13), mm=iso.slice(14,16);
+  const ap=hh<12?'a':'p'; let x=hh%12; if(x===0)x=12;
+  return `${x}:${mm}${ap}`;
+}
+
+/* Condition flags — agreed thresholds. sev: 'alert' (red) | 'caution' (amber).
+   Rain/heat/cold on intensity & feels-like, wind on gusts, TS/fog on code. */
+function computeFlags(rows){
+  const f=[];
+  if(rows.some(r=>[95,96,99].includes(r.code))) f.push({sev:'alert',icon:'⛈',label:'Thunderstorm'});
+  const maxP=Math.max(...rows.map(r=>r.precip||0));
+  if(maxP>=7.6) f.push({sev:'alert',icon:'🌧',label:`Heavy rain ${maxP.toFixed(1)} mm/h`});
+  else if(maxP>=2.5) f.push({sev:'caution',icon:'🌧',label:`Rain ${maxP.toFixed(1)} mm/h`});
+  const maxG=Math.max(...rows.map(r=>r.gust||0));
+  if(maxG>=55) f.push({sev:'alert',icon:'💨',label:`Gusts ${Math.round(maxG)} km/h`});
+  else if(maxG>=40) f.push({sev:'caution',icon:'💨',label:`Gusts ${Math.round(maxG)} km/h`});
+  const maxF=Math.max(...rows.map(r=>r.feels));
+  if(maxF>=35) f.push({sev:'alert',icon:'🥵',label:`Heat feels ${Math.round(maxF)}°`});
+  else if(maxF>=30) f.push({sev:'caution',icon:'🥵',label:`Heat feels ${Math.round(maxF)}°`});
+  const minF=Math.min(...rows.map(r=>r.feels));
+  if(minF<=3) f.push({sev:'alert',icon:'🥶',label:`Cold feels ${Math.round(minF)}°`});
+  else if(minF<=8) f.push({sev:'caution',icon:'🥶',label:`Cold feels ${Math.round(minF)}°`});
+  const fog=rows.filter(r=>[45,48].includes(r.code));
+  if(fog.length) f.push(fog.some(r=>!r.day)
+    ? {sev:'alert',icon:'🌫',label:'Fog in darkness'}
+    : {sev:'caution',icon:'🌫',label:'Fog'});
+  f.sort((a,b)=>(a.sev==='alert'?0:1)-(b.sev==='alert'?0:1));
+  return f;
 }
 
 function windArrow(fromDeg,cls){
@@ -444,8 +487,9 @@ function legSummary(rows){
   return {tmin,tmax,popMax,spdAvg,gustMax,kind,cls};
 }
 
-function renderLeg(leg,rows,err,status){
+function renderLeg(leg,data,err,status){
   const dt=fmtDate(leg.date);
+  const rows=data&&data.rows, sun=data&&data.sun;
   let inner;
   if(status==='done'){
     inner = `<div class="done-state"><span class="done-check">✓</span><span class="done-text">Completed</span></div>`;
@@ -458,15 +502,22 @@ function renderLeg(leg,rows,err,status){
     inner = `<div class="msg">No hourly data returned for this window yet.</div>`;
   } else {
     const s=legSummary(rows);
+    const flags=computeFlags(rows);
+    const flagsHtml = flags.length
+      ? `<div class="flags">${flags.map(f=>`<span class="flag-pill ${f.sev}">${f.icon} ${f.label}</span>`).join("")}</div>`
+      : '';
+    const sunChip = (sun&&sun.rise) ? `<div class="chip"><span class="k">Sun</span><span class="v">↑${fmtSun(sun.rise)} ↓${fmtSun(sun.set)}</span></div>` : '';
     // right-most chip: live (riding) or forecast confidence
     let dataChip;
     if(status==='live'){ dataChip=`<div class="chip"><span class="k">Weather</span><span class="v" style="color:var(--dawn)">live</span></div>`; }
     else { const d=daysOut(leg.date); const conf=d<=3?'high':d<=7?'medium':'low'; dataChip=`<div class="chip"><span class="k">Confidence</span><span class="v">${conf}</span></div>`; }
     inner = `
+      ${flagsHtml}
       <div class="summary">
         <div class="chip"><span class="k">Temp</span><span class="v">${s.tmin}°–${s.tmax}°C</span></div>
         <div class="chip"><span class="k">Rain</span><span class="v" style="color:${s.popMax>=40?'var(--rain)':'inherit'}">${s.popMax>0?s.popMax+'% peak':'none'}</span></div>
         <div class="chip wind"><span class="k">Wind</span><span class="v">${s.spdAvg} km/h${s.gustMax>s.spdAvg+10?` · g${s.gustMax}`:''}</span><span class="badge ${s.cls}">${s.kind}</span></div>
+        ${sunChip}
         ${dataChip}
       </div>
       <div class="hours">${rows.map((r,i)=>renderHour(r, i>0 && r.sec!==rows[i-1].sec)).join("")}</div>`;
@@ -505,10 +556,10 @@ async function refreshAll(){
   const results = await Promise.all(LEGS.map(async leg=>{
     const status=legStatus(leg);
     if(status==='done') return {leg, status};           // completed: no fetch, no forecast
-    try{ return {leg, status, rows: await fetchLeg(leg)}; }
+    try{ return {leg, status, data: await fetchLeg(leg)}; }
     catch(e){ return {leg, status, err: e.message||'error'}; }
   }));
-  container.innerHTML = results.map(r=>renderLeg(r.leg, r.rows, r.err, r.status)).join("");
+  container.innerHTML = results.map(r=>renderLeg(r.leg, r.data, r.err, r.status)).join("");
 
   const now=new Date();
   document.getElementById('stamp').textContent =
