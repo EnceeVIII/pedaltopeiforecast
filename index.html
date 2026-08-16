@@ -160,6 +160,7 @@
   .hour .glyph{font-size:22px;line-height:1.2;margin:3px 0 1px;filter:saturate(1.05)}
   .hour .temp{font-family:var(--disp);font-weight:800;font-size:19px;letter-spacing:-.02em}
   .hour .feels{font-family:var(--mono);font-size:9.5px;color:var(--muted-2)}
+  .hour .feels.bikecold{color:#7cc4f0;font-weight:700}
   .hour .pp{font-family:var(--mono);font-size:10.5px;color:var(--rain);margin-top:3px;min-height:14px}
   .hour .pp.dry{color:var(--muted-2)}
   .wind-cell{margin-top:6px;padding-top:7px;border-top:1px dashed var(--line);display:flex;flex-direction:column;align-items:center;gap:2px}
@@ -229,7 +230,7 @@
   <div id="legs"></div>
 
   <footer class="note">
-    <b>How to read it.</b> Each hour shows temperature (feels-like beneath), chance of rain, and the wind — arrow points the direction the wind is blowing, sized text is speed in km/h, and it's colour-coded for how it hits <i>you</i> relative to your direction of travel. Each leg is sampled at three points along your actual GPX route (start / middle / end); the dotted breaks in the hourly strip mark where the forecast hands off to the next stretch, so the wind follows the road as it bends. The wind badge is the blended effect across the whole leg. <b>Condition flags</b> appear above each leg when it's worth planning for — amber for caution, red for a hazard (thunderstorm, heavy rain, strong gusts, heat, cold, or fog); the leg's <b>sunrise/sunset</b> shows in the summary row.<br>
+    <b>How to read it.</b> Each hour shows temperature (feels-like beneath), chance of rain, and the wind — arrow points the direction the wind is blowing, sized text is speed in km/h, and it's colour-coded for how it hits <i>you</i> relative to your direction of travel. Each leg is sampled at three points along your actual GPX route (start / middle / end); the dotted breaks in the hourly strip mark where the forecast hands off to the next stretch, so the wind follows the road as it bends. The wind badge is the blended effect across the whole leg. <b>Condition flags</b> appear above each leg when it's worth planning for — amber for caution, red for a hazard (thunderstorm, heavy rain, strong gusts, heat, cold, or fog); the leg's <b>sunrise/sunset</b> shows in the summary row. The <b>🚴 figure under each temperature is the on-bike feels-like</b> — wind chill computed from the ~${'30'} km/h headwind you make plus the ambient wind, which is why a still-air night can feel near-freezing on the descent. It's a cold-weather model (no sun factored in, so it's a touch conservative by day); the cold flag is based on it.<br>
     <b>Times</b> are shown in each leg's local clock, with the Toronto-time equivalent beneath (watches stay on Toronto time to Summerside). <b>Forecasts firm up as the date nears</b> — anything more than ~7 days out is a low-confidence signal, so re-open this closer to the ride.
   </footer>
 
@@ -314,6 +315,27 @@ function bearing(a,b){
 const mid=(a,b)=>[(a[0]+b[0])/2,(a[1]+b[1])/2];
 const CARD=["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
 const cardinal=d=>CARD[Math.round(((d%360)/22.5))%16];
+
+/* ---------- on-bike feels-like ----------
+   Riders generate their own headwind. The air you actually feel is the vector
+   sum of your riding speed and the ambient wind, then Environment Canada's
+   wind-chill formula converts that airspeed + air temp into a felt temperature.
+   RIDER_KMH is your average moving speed — change it if your pace differs. */
+const RIDER_KMH = 30;
+function windChillEC(T, Vkmh){          // EC/NWS wind chill (°C, km/h)
+  const v = Math.pow(Math.max(Vkmh,1), 0.16);
+  return 13.12 + 0.6215*T - 11.37*v + 0.3965*T*v;
+}
+function relAirspeed(wspd, wdir, bear){ // airspeed felt by a moving rider (km/h)
+  const d = rad(wdir - bear);           // wind FROM (wdir) vs travel (bear)
+  return Math.sqrt(RIDER_KMH*RIDER_KMH + wspd*wspd + 2*RIDER_KMH*wspd*Math.cos(d));
+}
+function bikeFeels(row){
+  // cold: convective chill from riding airspeed (no sun at night = well modelled).
+  // mild/warm (>15°): the riding breeze is neutral-to-cooling, so use ambient feels-like.
+  if(row.temp<=15) return windChillEC(row.temp, relAirspeed(row.wspd,row.wdir,row.bear));
+  return row.feels;
+}
 
 /* headwind component: + = headwind, - = tailwind (relative to travel bearing) */
 function windEffect(fromDeg, speed, travel){
@@ -435,9 +457,9 @@ function computeFlags(rows){
   const maxF=Math.max(...rows.map(r=>r.feels));
   if(maxF>=35) f.push({sev:'alert',icon:'🥵',label:`Heat feels ${Math.round(maxF)}°`});
   else if(maxF>=30) f.push({sev:'caution',icon:'🥵',label:`Heat feels ${Math.round(maxF)}°`});
-  const minF=Math.min(...rows.map(r=>r.feels));
-  if(minF<=3) f.push({sev:'alert',icon:'🥶',label:`Cold feels ${Math.round(minF)}°`});
-  else if(minF<=8) f.push({sev:'caution',icon:'🥶',label:`Cold feels ${Math.round(minF)}°`});
+  const minBF=Math.min(...rows.map(bikeFeels));
+  if(minBF<=3) f.push({sev:'alert',icon:'🥶',label:`Cold ${Math.round(minBF)}° on bike`});
+  else if(minBF<=8) f.push({sev:'caution',icon:'🥶',label:`Cold ${Math.round(minBF)}° on bike`});
   const fog=rows.filter(r=>[45,48].includes(r.code));
   if(fog.length) f.push(fog.some(r=>!r.day)
     ? {sev:'alert',icon:'🌫',label:'Fog in darkness'}
@@ -461,11 +483,13 @@ function renderHour(h,newSec){
   const popCls=pop>=30?"":"dry";
   const hot=h.temp>=27;
   const col=eff.cls==='head'?'var(--head)':eff.cls==='tail'?'var(--tail)':'var(--cross)';
+  const bf=Math.round(bikeFeels(h));
+  const chill = h.temp<=15 && bf<=Math.round(h.temp)-2;   // riding makes it notably colder
   return `<div class="hour${hot?' rides-hot':''}${newSec?' sec-start':''}">
     <div class="t">${hourLabel(h.hr)}</div>
     <div class="glyph" title="${w.label}">${w.icon}</div>
     <div class="temp">${Math.round(h.temp)}°</div>
-    <div class="feels">feels ${Math.round(h.feels)}°</div>
+    <div class="feels${chill?' bikecold':''}">🚴 ${bf}°</div>
     <div class="pp ${popCls}">${pop>0?pop+'%':'—'}</div>
     <div class="wind-cell">
       ${windArrow(h.wdir,eff.cls)}
@@ -484,7 +508,8 @@ function legSummary(rows){
   let comp=0; rows.forEach(r=>comp+=windEffect(r.wdir,r.wspd,r.bear).comp); comp/=rows.length;
   let kind,cls;
   if(comp>2){kind="Headwind";cls="head";} else if(comp<-2){kind="Tailwind";cls="tail";} else {kind="Crosswind";cls="cross";}
-  return {tmin,tmax,popMax,spdAvg,gustMax,kind,cls};
+  const bfs=rows.map(bikeFeels), bfMin=Math.round(Math.min(...bfs)), bfMax=Math.round(Math.max(...bfs));
+  return {tmin,tmax,popMax,spdAvg,gustMax,kind,cls,bfMin,bfMax};
 }
 
 function renderLeg(leg,data,err,status){
@@ -515,6 +540,7 @@ function renderLeg(leg,data,err,status){
       ${flagsHtml}
       <div class="summary">
         <div class="chip"><span class="k">Temp</span><span class="v">${s.tmin}°–${s.tmax}°C</span></div>
+        <div class="chip"><span class="k">Bike feels</span><span class="v" style="color:${s.bfMin<=8?'#7cc4f0':'inherit'}">${s.bfMin}°–${s.bfMax}°C</span></div>
         <div class="chip"><span class="k">Rain</span><span class="v" style="color:${s.popMax>=40?'var(--rain)':'inherit'}">${s.popMax>0?s.popMax+'% peak':'none'}</span></div>
         <div class="chip wind"><span class="k">Wind</span><span class="v">${s.spdAvg} km/h${s.gustMax>s.spdAvg+10?` · g${s.gustMax}`:''}</span><span class="badge ${s.cls}">${s.kind}</span></div>
         ${sunChip}
