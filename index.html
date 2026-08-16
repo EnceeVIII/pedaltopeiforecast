@@ -225,12 +225,13 @@
     <span class="swatch"><span class="dot" style="background:var(--dawn)"></span> day</span>
     <span class="swatch"><span class="dot" style="background:var(--dusk)"></span> late evening</span>
     <span class="swatch"><span class="dot" style="background:var(--moon)"></span> night</span>
+    <span class="swatch" style="color:#7cc4f0">🚴 feels-like riding at 30 km/h</span>
   </div>
 
   <div id="legs"></div>
 
   <footer class="note">
-    <b>How to read it.</b> Each hour shows temperature (feels-like beneath), chance of rain, and the wind — arrow points the direction the wind is blowing, sized text is speed in km/h, and it's colour-coded for how it hits <i>you</i> relative to your direction of travel. Each leg is sampled at three points along your actual GPX route (start / middle / end); the dotted breaks in the hourly strip mark where the forecast hands off to the next stretch, so the wind follows the road as it bends. The wind badge is the blended effect across the whole leg. <b>Condition flags</b> appear above each leg when it's worth planning for — amber for caution, red for a hazard (thunderstorm, heavy rain, strong gusts, heat, cold, or fog); the leg's <b>sunrise/sunset</b> shows in the summary row. The <b>🚴 figure under each temperature is the on-bike feels-like</b> — wind chill computed from the ~${'30'} km/h headwind you make plus the ambient wind, which is why a still-air night can feel near-freezing on the descent. It's a cold-weather model (no sun factored in, so it's a touch conservative by day); the cold flag is based on it.<br>
+    <b>How to read it.</b> Each hour shows temperature (feels-like beneath), chance of rain, and the wind — arrow points the direction the wind is blowing, sized text is speed in km/h, and it's colour-coded for how it hits <i>you</i> relative to your direction of travel. Each leg is sampled at three points along your actual GPX route (start / middle / end); the dotted breaks in the hourly strip mark where the forecast hands off to the next stretch, so the wind follows the road as it bends. The wind badge is the blended effect across the whole leg. <b>Condition flags</b> appear above each leg when it's worth planning for — amber for caution, red for a hazard (thunderstorm, heavy rain, strong gusts, heat, cold, or fog); the leg's <b>sunrise/sunset</b> shows in the summary row. The <b>🚴 figure under each temperature is the on-bike feels-like</b> — wind chill computed from the 30 km/h headwind you make plus the ambient wind, which is why a still-air night can feel near-freezing on the descent. It's a cold-weather model (no sun factored in, so it's a touch conservative by day); the cold flag is based on it.<br>
     <b>Times</b> are shown in each leg's local clock, with the Toronto-time equivalent beneath (watches stay on Toronto time to Summerside). <b>Forecasts firm up as the date nears</b> — anything more than ~7 days out is a low-confidence signal, so re-open this closer to the ride.
   </footer>
 
@@ -540,7 +541,7 @@ function renderLeg(leg,data,err,status){
       ${flagsHtml}
       <div class="summary">
         <div class="chip"><span class="k">Temp</span><span class="v">${s.tmin}°–${s.tmax}°C</span></div>
-        <div class="chip"><span class="k">Bike feels</span><span class="v" style="color:${s.bfMin<=8?'#7cc4f0':'inherit'}">${s.bfMin}°–${s.bfMax}°C</span></div>
+        <div class="chip"><span class="k">Bike feels @30km/h</span><span class="v" style="color:${s.bfMin<=8?'#7cc4f0':'inherit'}">${s.bfMin}°–${s.bfMax}°C</span></div>
         <div class="chip"><span class="k">Rain</span><span class="v" style="color:${s.popMax>=40?'var(--rain)':'inherit'}">${s.popMax>0?s.popMax+'% peak':'none'}</span></div>
         <div class="chip wind"><span class="k">Wind</span><span class="v">${s.spdAvg} km/h${s.gustMax>s.spdAvg+10?` · g${s.gustMax}`:''}</span><span class="badge ${s.cls}">${s.kind}</span></div>
         ${sunChip}
