@@ -231,7 +231,7 @@
   <div id="legs"></div>
 
   <footer class="note">
-    <b>How to read it.</b> Each hour shows temperature (feels-like beneath), chance of rain, and the wind — arrow points the direction the wind is blowing, sized text is speed in km/h, and it's colour-coded for how it hits <i>you</i> relative to your direction of travel. Each leg is sampled at three points along your actual GPX route (start / middle / end); the dotted breaks in the hourly strip mark where the forecast hands off to the next stretch, so the wind follows the road as it bends. The wind badge is the blended effect across the whole leg. <b>Condition flags</b> appear above each leg when it's worth planning for — amber for caution, red for a hazard (thunderstorm, heavy rain, strong gusts, heat, cold, or fog); the leg's <b>sunrise/sunset</b> shows in the summary row. The <b>🚴 figure under each temperature is the on-bike feels-like</b> — wind chill computed from the 30 km/h headwind you make plus the ambient wind, which is why a still-air night can feel near-freezing on the descent. It's a cold-weather model (no sun factored in, so it's a touch conservative by day); the cold flag is based on it.<br>
+    <b>How to read it.</b> Each hour shows temperature (feels-like beneath), chance of rain, and the wind — arrow points the direction the wind is blowing, sized text is speed in km/h, and it's colour-coded for how it hits <i>you</i> relative to your direction of travel. Each leg is sampled at three points along your actual GPX route (start / middle / end); the dotted breaks in the hourly strip mark where the forecast hands off to the next stretch, so the wind follows the road as it bends. The wind badge is the blended effect across the whole leg. <b>Condition flags</b> appear above each leg when it's worth planning for — amber for caution, red for a hazard (thunderstorm, heavy rain, strong gusts, heat, cold, or fog); the leg's <b>sunrise/sunset</b> shows in the summary row. The <b>🚴 figure under each temperature is the on-bike feels-like</b> — wind chill computed from the 30 km/h headwind you make plus the ambient wind, which is why a still-air night can feel near-freezing on the descent. It's a cold-weather model (no sun factored in, so it's a touch conservative by day); the cold flag is based on it. On the dark legs a <b>Moon</b> chip shows the phase and % lit, and a <b>Moonlight</b> chip tells you whether the moon is actually above the horizon during your window — it computes moonrise/set for your location, so a bright phase that's already set correctly reads "below horizon."<br>
     <b>Times</b> are shown in each leg's local clock, with the Toronto-time equivalent beneath (watches stay on Toronto time to Summerside). <b>Forecasts firm up as the date nears</b> — anything more than ~7 days out is a low-confidence signal, so re-open this closer to the ride.
   </footer>
 
@@ -436,6 +436,75 @@ function legStatus(leg){
   return 'soon';
 }
 
+/* Moon phase from date (pure astronomy — no API). Returns emoji, name, % lit. */
+function moonPhase(dateMs){
+  const syn=29.530588853, ref=Date.UTC(2000,0,6,18,14,0);
+  let frac=(((dateMs-ref)/86400000)%syn)/syn; if(frac<0) frac+=1;
+  const illum=Math.round((1-Math.cos(2*Math.PI*frac))*50);
+  let name,emoji;
+  if(frac<0.02||frac>0.98){name="New";emoji="🌑";}
+  else if(frac<0.23){name="Waxing crescent";emoji="🌒";}
+  else if(frac<0.27){name="First quarter";emoji="🌓";}
+  else if(frac<0.48){name="Waxing gibbous";emoji="🌔";}
+  else if(frac<0.52){name="Full";emoji="🌕";}
+  else if(frac<0.73){name="Waning gibbous";emoji="🌖";}
+  else if(frac<0.77){name="Last quarter";emoji="🌗";}
+  else {name="Waning crescent";emoji="🌘";}
+  return {illum,name,emoji};
+}
+
+/* Moon rise/set relative to a ride window (Montenbruck–Pfleger low-precision
+   lunar position). Tells you if the moon is actually above the horizon while
+   you ride — phase % is useless if the moon is down. */
+function _mfrac(x){return x-Math.floor(x);}
+function _miniMoon(t){
+  const P2=2*Math.PI, ARC=206264.8062;
+  const L0=_mfrac(0.606433+1336.855225*t), L=P2*_mfrac(0.374897+1325.552410*t),
+        LS=P2*_mfrac(0.993133+99.997361*t), D=P2*_mfrac(0.827361+1236.853086*t),
+        F=P2*_mfrac(0.259086+1342.227825*t);
+  const DL=22640*Math.sin(L)-4586*Math.sin(L-2*D)+2370*Math.sin(2*D)+769*Math.sin(2*L)
+    -668*Math.sin(LS)-412*Math.sin(2*F)-212*Math.sin(2*L-2*D)-206*Math.sin(L+LS-2*D)
+    +192*Math.sin(L+2*D)-165*Math.sin(LS-2*D)+148*Math.sin(L-LS)-125*Math.sin(D)
+    -110*Math.sin(L+LS)-55*Math.sin(2*F-2*D);
+  const S=F+(DL+412*Math.sin(2*F)+541*Math.sin(LS))/ARC, H=F-2*D;
+  const N=-526*Math.sin(H)+44*Math.sin(L+H)-31*Math.sin(-L+H)-23*Math.sin(LS+H)
+    +11*Math.sin(-LS+H)-25*Math.sin(-2*L+F)+21*Math.sin(-L+F);
+  const LM=P2*_mfrac(L0+DL/1296000), BM=(18520*Math.sin(S)+N)/ARC;
+  const CE=0.91748, SE=0.39778, CB=Math.cos(BM);
+  const X=CB*Math.cos(LM), V=CB*Math.sin(LM), W=Math.sin(BM);
+  const Y=CE*V-SE*W, Z=SE*V+CE*W, R=Math.sqrt(1-Z*Z);
+  let ra=(24/Math.PI)*Math.atan2(Y,X+R); if(ra<0)ra+=24;
+  return {ra, dec:Math.atan2(Z,R)};
+}
+function _lmstMoon(mjd,lon){
+  const m0=Math.floor(mjd), ut=(mjd-m0)*24, t=(m0-51544.5)/36525;
+  const g=6.697374558+1.0027379093*ut+(8640184.812866+(0.093104-6.2e-6*t)*t)*t/3600;
+  return 24*_mfrac((g+lon/15)/24);
+}
+function _moonAlt(mjd,lon,latR){
+  const t=(mjd-51544.5)/36525, o=_miniMoon(t);
+  const tau=15*(_lmstMoon(mjd,lon)-o.ra)*Math.PI/180;
+  return Math.asin(Math.sin(latR)*Math.sin(o.dec)+Math.cos(latR)*Math.cos(o.dec)*Math.cos(tau));
+}
+function fmtDec(h){ h=((h%24)+24)%24; let hh=Math.floor(h), m=Math.round((h-hh)*60);
+  if(m===60){m=0;hh=(hh+1)%24;} const ap=hh<12?'a':'p'; let x=hh%12; if(x===0)x=12;
+  return `${x}:${String(m).padStart(2,'0')}${ap}`; }
+function moonRide(leg){
+  const off=leg.tz==='America/Halifax'?-3:-4;
+  const [lat,lon]=leg.sections[1].pt;
+  const [y,m,d]=leg.date.split('-').map(Number);
+  const mjd0=(Date.UTC(y,m-1,d,0)-off*3600e3)/86400000+40587, latR=lat*Math.PI/180;
+  const A=h=>_moonAlt(mjd0+h/24,lon,latR);
+  const ev=[]; let pa=A(leg.from), ph=leg.from;
+  for(let h=leg.from+0.1; h<=leg.to+1e-9; h+=0.1){
+    const a=A(h);
+    if((pa<0&&a>=0)||(pa>=0&&a<0)) ev.push({t:ph+(0-pa)*(h-ph)/(a-pa), rise:a>pa});
+    pa=a; ph=h;
+  }
+  if(!ev.length) return {desc: A(leg.from)>0?'up all ride':'below horizon', dark: A(leg.from)<=0};
+  return {desc: ev.map(e=>`${e.rise?'rises':'sets'} ${fmtDec(e.t)}`).join(', '), dark:false};
+}
+
 /* sunrise/sunset ISO (local) -> "6:12a" */
 function fmtSun(iso){
   if(!iso) return '—';
@@ -533,6 +602,14 @@ function renderLeg(leg,data,err,status){
       ? `<div class="flags">${flags.map(f=>`<span class="flag-pill ${f.sev}">${f.icon} ${f.label}</span>`).join("")}</div>`
       : '';
     const sunChip = (sun&&sun.rise) ? `<div class="chip"><span class="k">Sun</span><span class="v">↑${fmtSun(sun.rise)} ↓${fmtSun(sun.set)}</span></div>` : '';
+    let moonChip='';
+    if(leg.phase==='night'||leg.phase==='dusk'){
+      const [my,mm,md]=leg.date.split('-').map(Number);
+      const mo=moonPhase(Date.UTC(my,mm-1,md,12));
+      const mv=moonRide(leg);
+      moonChip=`<div class="chip"><span class="k">Moon</span><span class="v">${mo.emoji} ${mo.name} · ${mo.illum}%</span></div>`
+             +`<div class="chip"><span class="k">Moonlight</span><span class="v" style="color:${mv.dark?'var(--muted-2)':'#9FB3D9'}">${mv.desc}</span></div>`;
+    }
     // right-most chip: live (riding) or forecast confidence
     let dataChip;
     if(status==='live'){ dataChip=`<div class="chip"><span class="k">Weather</span><span class="v" style="color:var(--dawn)">live</span></div>`; }
@@ -545,6 +622,7 @@ function renderLeg(leg,data,err,status){
         <div class="chip"><span class="k">Rain</span><span class="v" style="color:${s.popMax>=40?'var(--rain)':'inherit'}">${s.popMax>0?s.popMax+'% peak':'none'}</span></div>
         <div class="chip wind"><span class="k">Wind</span><span class="v">${s.spdAvg} km/h${s.gustMax>s.spdAvg+10?` · g${s.gustMax}`:''}</span><span class="badge ${s.cls}">${s.kind}</span></div>
         ${sunChip}
+        ${moonChip}
         ${dataChip}
       </div>
       <div class="hours">${rows.map((r,i)=>renderHour(r, i>0 && r.sec!==rows[i-1].sec)).join("")}</div>`;
